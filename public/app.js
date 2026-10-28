@@ -232,8 +232,11 @@ function fieldInput(step, f, i) {
         f.options.map(([ov, ol]) => h('option', { value: ov, selected: ov === v }, ol)));
     case 'proxy':
       return h('select', { onchange: (e) => set(e.target.value) }, proxyOptions(v, f.allowSame));
-    default:
-      return h('input', { value: v ?? '', oninput: (e) => set(e.target.value) });
+    default: {
+      // iOS иногда не шлёт input при вставке/автозамене — слушаем и change
+      const upd = (e) => set(e.target.value);
+      return h('input', { value: v ?? '', placeholder: f.placeholder, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', oninput: upd, onchange: upd });
+    }
   }
 }
 
@@ -356,7 +359,7 @@ $('#sc-delete').addEventListener('click', act(async () => {
 }));
 
 $('#sc-run').addEventListener('click', act(async () => {
-  if (S.dirty) await saveScenario();
+  await saveScenario(); // всегда, чтобы в запуск ушло то, что сейчас на экране
   S.activeRun = await api('POST', `api/scenarios/${S.current.id}/run`);
   renderRunState();
   pollRun();

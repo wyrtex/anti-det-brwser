@@ -9,7 +9,7 @@ const STEPS = [
   {
     type: 'start_session',
     label: 'Начать сессию',
-    fields: [{ name: 'proxy', label: 'Прокси', kind: 'proxy', default: 'pool' }],
+    fields: [{ name: 'proxy', label: 'Прокси', kind: 'proxy', default: 'none' }],
   },
   {
     type: 'restart_session',
@@ -23,7 +23,7 @@ const STEPS = [
   {
     type: 'goto',
     label: 'Перейти по ссылке',
-    fields: [{ name: 'url', label: 'URL', kind: 'text', default: 'https://' }],
+    fields: [{ name: 'url', label: 'URL', kind: 'text', default: '', placeholder: 'https://example.com' }],
   },
   {
     type: 'mouse_move',
@@ -111,9 +111,13 @@ function num(v, def) {
 }
 
 function checkUrl(url) {
+  let raw = String(url ?? '').trim();
+  if (!raw || /^https?:\/\/$/i.test(raw)) throw new Error('Не указана ссылка в шаге «Перейти по ссылке»');
+  // t.me/abc -> https://t.me/abc (но file:, chrome: и т.п. схемы не трогаем, их отсечёт проверка ниже)
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw) || /^[^/]+:\d+(\/|$)/.test(raw)) raw = `https://${raw}`;
   let u;
   try {
-    u = new URL(String(url).trim());
+    u = new URL(raw);
   } catch {
     throw new Error(`Некорректный URL: ${url}`);
   }
@@ -229,4 +233,4 @@ async function executeStep(step, ctx) {
   }
 }
 
-module.exports = { STEPS, executeStep, describe, sleep };
+module.exports = { STEPS, executeStep, describe, sleep, checkUrl };
