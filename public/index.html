@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111418">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Browser Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="card">
+      <h1>Browser Panel</h1>
+      <input type="password" id="login-pass" placeholder="Пароль" autocomplete="current-password" required>
+      <button type="submit" class="primary">Войти</button>
+      <div id="login-err" class="err"></div>
+    </form>
+  </div>
+
+  <div id="app" class="hidden">
+    <header>
+      <b class="brand">Browser Panel</b>
+      <nav id="tabs">
+        <button data-tab="builder" class="active">Сценарии</button>
+        <button data-tab="runs">Запуски</button>
+        <button data-tab="proxies">Прокси</button>
+      </nav>
+      <button id="logout" class="ghost">Выйти</button>
+    </header>
+
+    <main>
+      <!-- Конструктор -->
+      <section id="tab-builder" class="tab">
+        <aside class="scenarios">
+          <div class="row">
+            <b>Сценарии</b>
+            <button id="sc-new" class="small">+ Новый</button>
+          </div>
+          <ul id="sc-list"></ul>
+        </aside>
+
+        <div class="builder">
+          <div id="sc-empty" class="muted">Выбери сценарий слева или создай новый.</div>
+          <div id="sc-editor" class="hidden">
+            <div class="sc-head">
+              <input id="sc-name" class="title-input" placeholder="Название сценария">
+              <div class="sc-opts">
+                <label>Повторов <input id="sc-repeat" type="number" min="1" max="1000"></label>
+                <label>Каждые, мин <input id="sc-interval" type="number" min="0"></label>
+                <label class="check"><input id="sc-schedule" type="checkbox"> по расписанию</label>
+              </div>
+              <div class="sc-actions">
+                <button id="sc-save" class="primary">Сохранить</button>
+                <button id="sc-run" class="go">▶ Запустить</button>
+                <button id="sc-stop" class="danger hidden">■ Стоп</button>
+                <button id="sc-delete" class="ghost">Удалить</button>
+                <span id="sc-dirty" class="muted hidden">есть несохранённые изменения</span>
+              </div>
+            </div>
+
+            <ol id="steps"></ol>
+
+            <div class="add-step">
+              <select id="add-type"></select>
+              <button id="add-btn">+ Добавить шаг</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="live">
+          <div class="row">
+            <b>Экран</b>
+            <span id="live-source" class="muted"></span>
+          </div>
+          <div class="live-controls">
+            <select id="test-proxy"></select>
+            <button id="test-start" class="small">Тестовая сессия</button>
+            <button id="test-close" class="small ghost hidden">Закрыть</button>
+          </div>
+          <div id="pick-banner" class="banner hidden">Кликни по экрану, чтобы выбрать координаты <button id="pick-cancel" class="small ghost">отмена</button></div>
+          <div class="screen-wrap">
+            <img id="screen" alt="">
+            <div id="screen-empty" class="screen-empty">Нет активной сессии.<br>Запусти тестовую сессию, чтобы видеть страницу, подбирать координаты и проверять шаги.</div>
+            <div id="screen-xy" class="xy hidden"></div>
+          </div>
+          <div id="interact" class="interact hidden">
+            <div class="row">
+              <label class="check"><input id="click-through" type="checkbox" checked> клик по экрану = клик в браузере</label>
+              <label class="check"><input id="record" type="checkbox"> записывать в сценарий</label>
+            </div>
+            <div class="row">
+              <input id="i-url" placeholder="https://…">
+              <button id="i-go" class="small">Перейти</button>
+            </div>
+            <div class="row">
+              <input id="i-text" placeholder="Текст для ввода">
+              <button id="i-type" class="small">Ввести</button>
+            </div>
+            <div class="row keys">
+              <button data-key="Enter" class="small ghost">Enter</button>
+              <button data-key="Tab" class="small ghost">Tab</button>
+              <button data-key="Backspace" class="small ghost">⌫</button>
+              <button data-key="Control+A" class="small ghost">Ctrl+A</button>
+              <button data-scroll="500" class="small ghost">↓ скролл</button>
+              <button data-scroll="-500" class="small ghost">↑ скролл</button>
+            </div>
+          </div>
+          <div id="run-box" class="run-box hidden">
+            <div class="row"><b id="run-title"></b><span id="run-status" class="badge"></span></div>
+            <pre id="run-log"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Запуски -->
+      <section id="tab-runs" class="tab hidden">
+        <div class="runs-wrap">
+          <ul id="runs-list" class="runs-list"></ul>
+          <div id="run-detail" class="run-detail muted">Выбери запуск.</div>
+        </div>
+      </section>
+
+      <!-- Прокси -->
+      <section id="tab-proxies" class="tab hidden">
+        <div class="proxies-wrap">
+          <div class="card">
+            <b>Добавить прокси</b>
+            <p class="muted">По одному в строке: <code>http://user:pass@host:port</code>, <code>host:port:user:pass</code>, <code>host:port</code>, <code>socks5://host:port</code> (SOCKS — только без пароля).</p>
+            <textarea id="px-text" rows="5" placeholder="http://user:pass@1.2.3.4:8000"></textarea>
+            <div class="row">
+              <label>Ссылка смены IP (необязательно) <input id="px-rotate" placeholder="https://provider/changeip?key=…"></label>
+              <label>Сессий на один прокси <input id="px-max" type="number" min="1" value="1"></label>
+            </div>
+            <button id="px-add" class="primary">Добавить</button>
+            <div id="px-msg" class="muted"></div>
+          </div>
+          <table class="px-table">
+            <thead><tr><th>Прокси</th><th>Подпись</th><th>Ссылка смены IP</th><th>Сессий</th><th>Занят</th><th></th></tr></thead>
+            <tbody id="px-list"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

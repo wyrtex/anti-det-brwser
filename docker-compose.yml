@@ -1,0 +1,20 @@
+services:
+  browser-panel:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      DATA_DIR: /app/data
+    # Наружу не публикуем: доступ только через nginx на этом же сервере.
+    ports:
+      - "127.0.0.1:3100:3100"
+    # Сценарии и список прокси хранятся в томе и переживают пересборку.
+    volumes:
+      - panel-data:/app/data
+    # Chromium активно использует /dev/shm, по умолчанию в Docker его мало.
+    shm_size: "1gb"
+    init: true
+
+volumes:
+  panel-data:
