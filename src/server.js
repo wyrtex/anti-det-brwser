@@ -17,8 +17,8 @@ const DATA_DIR = path.resolve(env.DATA_DIR || path.join(__dirname, '..', 'data')
 const COOKIE_SECURE = env.COOKIE_SECURE === '1';
 const VIEWPORT = { width: Number(env.VIEWPORT_WIDTH || 1280), height: Number(env.VIEWPORT_HEIGHT || 800) };
 
-if (ADMIN_PASSWORD.length < 8) {
-  console.error('Задай ADMIN_PASSWORD (минимум 8 символов) в .env');
+if (ADMIN_PASSWORD.length < 4) {
+  console.error('Задай ADMIN_PASSWORD (минимум 4 символа) в .env');
   process.exit(1);
 }
 
@@ -75,15 +75,28 @@ function setAuthCookie(res, value, maxAgeMs) {
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 
-const failures = new Map(); // ip -> { n, until }
+// Лимиты неудачных входов: с одного IP и суммарно со всех IP.
+// Общий лимит защищает короткий пароль от перебора с множества адресов.
+const LIMITS = { ip: { n: 5, ms: 15 * 60000 }, all: { n: 20, ms: 60 * 60000 } };
+const failures = new Map(); // ключ (ip или '*') -> { n, until }
+function overLimit(key, lim) {
+  const f = failures.get(key);
+  return !!f && f.n >= lim.n && f.until > Date.now();
+}
+function countFailure(key, lim) {
+  const f = failures.get(key);
+  if (!f || f.until < Date.now()) failures.set(key, { n: 1, until: Date.now() + lim.ms });
+  else f.n += 1;
+}
 function loginBlocked(ip) {
-  const f = failures.get(ip);
-  return f && f.n >= 10 && f.until > Date.now();
+  if (overLimit(ip, LIMITS.ip)) return 'Слишком много попыток с этого IP, подожди 15 минут';
+  if (overLimit('*', LIMITS.all)) return 'Вход временно заблокирован из-за множества неверных попыток, подожди до часа';
+  return '';
 }
 function loginFailed(ip) {
-  const f = failures.get(ip);
-  if (!f || f.until < Date.now()) failures.set(ip, { n: 1, until: Date.now() + 15 * 60 * 1000 });
-  else f.n += 1;
+  countFailure(ip, LIMITS.ip);
+  countFailure('*', LIMITS.all);
+  if (overLimit('*', LIMITS.all)) console.warn('Вход заблокирован на час: слишком много неверных паролей');
 }
 
 // ---------- сценарии ----------
@@ -153,7 +166,8 @@ const notFound = (what) => Object.assign(new Error(`${what} не найден(а
 
 r.post('/api/login', (req, res) => {
   const ip = req.ip;
-  if (loginBlocked(ip)) return res.status(429).json({ error: 'Слишком много попыток, подожди 15 минут' });
+  const blocked = loginBlocked(ip);
+  if (blocked) return res.status(429).json({ error: blocked });
   if (!safeEq(String(req.body?.password || ''), ADMIN_PASSWORD)) {
     loginFailed(ip);
     return res.status(401).json({ error: 'Неверный пароль' });
