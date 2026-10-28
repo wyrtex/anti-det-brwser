@@ -37,6 +37,7 @@ class Runner {
       currentStep: r.currentStep,
       iteration: r.iteration,
       error: r.error,
+      hasLast: !!r.hasLast,
       screenshots: r.screenshots,
     };
     if (withLogs) out.logs = r.logs;
@@ -144,6 +145,16 @@ class Runner {
         } catch {}
       }
     } finally {
+      // Кадр «чем закончилось» — до закрытия сессии.
+      const s = ctx.session();
+      if (s && s.page) {
+        try {
+          const dir = path.join(this.runsDir, run.id);
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'last.jpg'), await s.page.screenshot({ type: 'jpeg', quality: 60, timeout: 5000 }));
+          run.hasLast = true;
+        } catch {}
+      }
       await ctx.closeSession().catch(() => {});
       run.finishedAt = Date.now();
       run.currentStep = -1;

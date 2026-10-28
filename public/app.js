@@ -363,6 +363,8 @@ $('#sc-run').addEventListener('click', act(async () => {
   S.activeRun = await api('POST', `api/scenarios/${S.current.id}/run`);
   renderRunState();
   pollRun();
+  // на телефоне экран под редактором — показываем его, чтобы было видно, что происходит
+  if (matchMedia('(max-width: 1100px)').matches) $('.live').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }));
 
 $('#sc-stop').addEventListener('click', act(async () => {
@@ -375,7 +377,7 @@ async function pollRun() {
   polling = true;
   try {
     while (S.activeRun && S.activeRun.status === 'running') {
-      await sleep(1000);
+      await sleep(600);
       try {
         S.activeRun = await api('GET', `api/runs/${S.activeRun.id}`);
       } catch {
@@ -425,38 +427,77 @@ function viewSessionId() {
 }
 
 function updateLiveUi() {
-  const run = S.activeRun && S.activeRun.status === 'running' ? S.activeRun : null;
-  $('#live-source').textContent = run ? `запуск ${run.id}` : S.testSessionId ? 'тестовая сессия' : '';
+  const run = S.activeRun;
+  const running = run && run.status === 'running';
+  $('#live-source').textContent = running ? `запуск ${run.id}` : S.testSessionId ? 'тестовая сессия'
+    : run && run.hasLast ? `последний кадр запуска ${run.id}` : '';
   $('#test-start').textContent = S.testSessionId ? 'Новая тестовая сессия' : 'Тестовая сессия';
   $('#test-close').classList.toggle('hidden', !S.testSessionId);
-  $('#interact').classList.toggle('hidden', !S.testSessionId || !!run);
+  $('#interact').classList.toggle('hidden', !S.testSessionId || !!running);
+  // подпись внизу экрана: что делается прямо сейчас
+  const cap = $('#screen-step');
+  let text = '';
+  if (running) text = (run.logs || []).filter((l) => /^\d+\./.test(l.msg)).at(-1)?.msg || 'запуск…';
+  else if (!S.testSessionId && run && run.hasLast) text = `${STATUS[run.status]}${run.error ? ': ' + run.error : ''}`;
+  cap.textContent = text;
+  cap.classList.toggle('hidden', !text);
 }
 
-let lastUrl = null;
+let blobUrl = null;
+let shownKey = null; // для неживых кадров: не перекачиваем одно и то же
+
+function clearFrame() {
+  $('#screen').removeAttribute('src');
+  $('#screen-empty').classList.remove('hidden');
+  for (const id of ['#screen-cursor', '#screen-url']) $(id).classList.add('hidden');
+  shownKey = null;
+}
+
+function placeCursor(mx, my) {
+  const img = $('#screen');
+  const r = img.getBoundingClientRect();
+  const w = img.parentElement.getBoundingClientRect();
+  const { width: vw, height: vh } = S.config.viewport;
+  const sc = Math.min(r.width / vw, r.height / vh);
+  const el = $('#screen-cursor');
+  el.style.left = `${r.left - w.left + (r.width - vw * sc) / 2 + mx * sc}px`;
+  el.style.top = `${r.top - w.top + (r.height - vh * sc) / 2 + my * sc}px`;
+  el.classList.remove('hidden');
+}
+
+async function showFrame(url, live, sessionId) {
+  if (!live && shownKey === url) return;
+  try {
+    const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`, { credentials: 'same-origin' });
+    if (res.status === 404 && live && sessionId === S.testSessionId) S.testSessionId = null;
+    if (!res.ok) return; // сессия могла закрыться между опросами — оставляем прошлый кадр
+    const next = URL.createObjectURL(await res.blob());
+    $('#screen').src = next;
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    blobUrl = next;
+    shownKey = live ? null : url;
+    $('#screen-empty').classList.add('hidden');
+    const pageUrl = res.headers.get('X-Page-Url');
+    $('#screen-url').textContent = pageUrl ? decodeURIComponent(pageUrl) : '';
+    $('#screen-url').classList.toggle('hidden', !pageUrl);
+    const m = res.headers.get('X-Mouse');
+    if (live && m) placeCursor(...m.split(',').map(Number));
+    else $('#screen-cursor').classList.add('hidden');
+  } catch {}
+}
+
 async function screenLoop() {
   for (;;) {
-    const id = viewSessionId();
     updateLiveUi();
-    if (id && !document.hidden && !$('#app').classList.contains('hidden')) {
-      try {
-        const res = await fetch(`api/sessions/${id}/screenshot?t=${Date.now()}`, { credentials: 'same-origin' });
-        if (res.ok) {
-          const url = URL.createObjectURL(await res.blob());
-          $('#screen').src = url;
-          if (lastUrl) URL.revokeObjectURL(lastUrl);
-          lastUrl = url;
-          $('#screen-empty').classList.add('hidden');
-        } else if (res.status === 404) {
-          if (id === S.testSessionId) S.testSessionId = null;
-          $('#screen').removeAttribute('src');
-          $('#screen-empty').classList.remove('hidden');
-        }
-      } catch {}
-    } else if (!id) {
-      $('#screen').removeAttribute('src');
-      $('#screen-empty').classList.remove('hidden');
+    const run = S.activeRun;
+    const running = run && run.status === 'running';
+    const live = running && run.sessionId ? run.sessionId : S.testSessionId;
+    if (!document.hidden && !$('#app').classList.contains('hidden')) {
+      if (live) await showFrame(`api/sessions/${live}/screenshot`, true, live);
+      else if (run && run.hasLast) await showFrame(`api/runs/${run.id}/last`, false);
+      else if (!running) clearFrame();
     }
-    await sleep(800);
+    await sleep(running ? 400 : 800);
   }
 }
 

@@ -232,6 +232,14 @@ r.get('/api/runs/:id/shots/:file', (req, res) => {
   res.sendFile(path.join(runner.runsDir, run.id, shot.file));
 });
 
+// Последний кадр запуска: сессия к этому моменту уже закрыта, а посмотреть, чем всё закончилось, нужно.
+r.get('/api/runs/:id/last', (req, res) => {
+  const run = runner.get(req.params.id);
+  if (!run || !run.hasLast) return res.status(404).end();
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(path.join(runner.runsDir, run.id, 'last.jpg'));
+});
+
 // сессии (ручное управление и просмотр)
 r.get('/api/sessions', wrap(() => sessions.list()));
 r.post('/api/sessions', wrap(async (req) => {
@@ -246,6 +254,8 @@ r.get('/api/sessions/:id/screenshot', async (req, res) => {
   try {
     const buf = await s.page.screenshot({ type: 'jpeg', quality: 60, timeout: 5000 });
     res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Mouse', `${Math.round(s.mouse.x)},${Math.round(s.mouse.y)}`);
+    res.setHeader('X-Page-Url', encodeURIComponent(s.page.url()));
     res.type('image/jpeg').send(buf);
   } catch {
     res.status(503).end();
