@@ -315,6 +315,7 @@ function renderEditor() {
   $('#sc-name').value = sc.name;
   $('#sc-repeat').value = sc.repeat || 1;
   $('#sc-interval').value = sc.intervalMin || 0;
+  $('#sc-delay').value = (sc.stepDelayMs || 1000) / 1000;
   $('#sc-schedule').checked = !!sc.scheduleEnabled;
   renderSteps();
   renderRunState();
@@ -330,6 +331,13 @@ for (const [id, key, conv] of [
     setDirty(true);
   });
 }
+$('#sc-delay').addEventListener('input', (e) => {
+  S.current.stepDelayMs = Math.max(1000, Math.round(Number(e.target.value) * 1000) || 1000);
+  setDirty(true);
+});
+$('#sc-delay').addEventListener('change', (e) => {
+  e.target.value = (S.current.stepDelayMs || 1000) / 1000; // поле не должно показывать меньше минимума
+});
 $('#sc-schedule').addEventListener('change', (e) => {
   S.current.scheduleEnabled = e.target.checked;
   setDirty(true);
@@ -645,15 +653,16 @@ $('#test-close').addEventListener('click', act(async () => {
   S.testSessionId = null;
 }));
 
-async function sendStep(step) {
+// delayMs — пауза после шага: для живых действий руками короткая, для кнопки ▶ у шага — как в сценарии
+async function sendStep(step, delayMs = 300) {
   if (!S.testSessionId) throw new Error('Сначала запусти тестовую сессию (справа)');
-  const out = await api('POST', `api/sessions/${S.testSessionId}/step`, { step });
+  const out = await api('POST', `api/sessions/${S.testSessionId}/step`, { step, delayMs });
   if (!out.session) S.testSessionId = null;
   return out;
 }
 
 async function testStep(step) {
-  const out = await sendStep(step);
+  const out = await sendStep(step, S.current?.stepDelayMs || 1000);
   if (out.screenshot) {
     const w = window.open();
     if (w) w.document.write(`<img src="data:image/png;base64,${out.screenshot}" style="max-width:100%">`);

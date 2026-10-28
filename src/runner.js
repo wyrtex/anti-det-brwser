@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { executeStep, describe } = require('./steps');
+const { executeStep, describe, settle } = require('./steps');
 
 const KEEP_RUNS = 50;
 
@@ -68,7 +68,7 @@ class Runner {
     };
     this.runs.set(run.id, run);
     this._trim();
-    this._exec(run, steps, Math.max(1, Math.min(1000, Number(scenario.repeat) || 1)));
+    this._exec(run, steps, Math.max(1, Math.min(1000, Number(scenario.repeat) || 1)), Math.max(1000, Number(scenario.stepDelayMs) || 1000));
     return run;
   }
 
@@ -86,7 +86,7 @@ class Runner {
     }
   }
 
-  async _exec(run, steps, repeat) {
+  async _exec(run, steps, repeat, stepDelayMs) {
     const log = (msg) => run.logs.push({ t: Date.now(), msg });
     const sm = this.sessions;
     const ctx = {
@@ -117,7 +117,7 @@ class Runner {
       shouldStop: () => run.stopRequested,
     };
 
-    log(`Старт: «${run.scenarioName}», шагов: ${steps.length}, повторов: ${repeat}`);
+    log(`Старт: «${run.scenarioName}», шагов: ${steps.length}, повторов: ${repeat}, пауза после шага: ${stepDelayMs / 1000} с`);
     try {
       for (let it = 0; it < repeat; it++) {
         run.iteration = it + 1;
@@ -129,6 +129,7 @@ class Runner {
           run.currentStep = i;
           log(`${i + 1}. ${describe(step)}`);
           await executeStep(step, ctx);
+          await settle(step, ctx, stepDelayMs);
         }
       }
       run.status = 'done';

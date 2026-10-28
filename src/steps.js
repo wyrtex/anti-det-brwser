@@ -166,9 +166,12 @@ async function executeStep(step, ctx) {
       return ctx.restartSession({ proxy: p.proxy || 'same', rotateIp: !!p.rotateIp });
     case 'close_session':
       return ctx.closeSession();
-    case 'goto':
-      await page().goto(checkUrl(p.url), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    case 'goto': {
+      const pg = page();
+      await pg.goto(checkUrl(p.url), { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await pg.waitForLoadState('load', { timeout: 45000 }).catch(() => {}); // тяжёлые ресурсы не должны ронять сценарий
       return;
+    }
     case 'mouse_move': {
       const pg = page();
       const m = mouse();
@@ -221,9 +224,12 @@ async function executeStep(step, ctx) {
     case 'click_selector':
       await page().click(String(p.selector), { timeout: 15000 });
       return;
-    case 'reload':
-      await page().reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    case 'reload': {
+      const pg = page();
+      await pg.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
+      await pg.waitForLoadState('load', { timeout: 45000 }).catch(() => {});
       return;
+    }
     case 'screenshot': {
       const buf = await page().screenshot({ type: 'png' });
       return ctx.saveScreenshot(buf, p.name || '');
@@ -233,4 +239,21 @@ async function executeStep(step, ctx) {
   }
 }
 
-module.exports = { STEPS, executeStep, describe, sleep, checkUrl };
+// Шаги, после которых страница может начать грузиться (переход, клик по ссылке, Enter в форме).
+const NAVIGATING = new Set(['goto', 'click', 'click_selector', 'press', 'reload', 'start_session', 'restart_session']);
+const NO_SETTLE = new Set(['wait', 'close_session', 'screenshot']);
+
+// Пауза после шага: не меньше minMs, затем ждём, пока страница догрузится.
+// Пауза идёт первой — за это время успевает начаться переход, вызванный кликом,
+// и ожидание загрузки относится уже к новой странице.
+async function settle(step, ctx, minMs = 1000) {
+  if (NO_SETTLE.has(step.type)) return;
+  await sleep(Math.max(0, minMs), ctx);
+  const s = ctx.session();
+  const pg = s && s.page;
+  if (!pg) return;
+  await pg.waitForLoadState('load', { timeout: 45000 }).catch(() => {});
+  if (NAVIGATING.has(step.type)) await pg.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+}
+
+module.exports = { STEPS, executeStep, describe, sleep, checkUrl, settle };

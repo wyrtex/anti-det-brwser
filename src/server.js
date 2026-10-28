@@ -6,7 +6,7 @@ const { ProxyPool } = require('./proxies');
 const { SessionManager } = require('./sessions');
 const { Runner } = require('./runner');
 const { SubscriptionManager, Xray } = require('./subscriptions');
-const { STEPS, executeStep } = require('./steps');
+const { STEPS, executeStep, settle } = require('./steps');
 
 const env = process.env;
 const ADMIN_PASSWORD = env.ADMIN_PASSWORD || '';
@@ -124,6 +124,8 @@ function cleanScenario(body, prev = {}) {
     name,
     steps: cleanSteps,
     repeat: Math.max(1, Math.min(1000, Number(body.repeat ?? prev.repeat ?? 1) || 1)),
+    // пауза после каждого шага: минимум 1 с, чтобы страницы на медленном соединении успевали грузиться
+    stepDelayMs: Math.max(1000, Math.min(60000, Number(body.stepDelayMs ?? prev.stepDelayMs ?? 1000) || 1000)),
     intervalMin: Math.max(0, Number(body.intervalMin ?? prev.intervalMin ?? 0) || 0),
     scheduleEnabled: !!(body.scheduleEnabled ?? prev.scheduleEnabled),
     updatedAt: Date.now(),
@@ -277,14 +279,17 @@ r.post('/api/sessions/:id/step', wrap(async (req) => {
   const step = req.body?.step;
   if (!step || !KNOWN_STEPS.has(step.type)) throw new Error('Неизвестный шаг');
   let shot = null;
-  await executeStep(step, {
+  const delayMs = Math.max(0, Math.min(60000, Number(req.body?.delayMs ?? 1000)));
+  const ctx = {
     session: () => sessions.get(id),
     startSession: (o) => sessions.restart(id, o),
     restartSession: (o) => sessions.restart(id, o),
     closeSession: () => sessions.close(id),
     saveScreenshot: async (buf) => { shot = buf.toString('base64'); },
     shouldStop: () => false,
-  });
+  };
+  await executeStep(step, ctx);
+  await settle(step, ctx, delayMs);
   return { ok: true, session: sessions.get(id)?.info() || null, screenshot: shot };
 }));
 

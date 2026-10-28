@@ -47,6 +47,7 @@
               <input id="sc-name" class="title-input" placeholder="Название сценария">
               <div class="sc-opts">
                 <label>Повторов <input id="sc-repeat" type="number" min="1" max="1000"></label>
+                <label title="Пауза после каждого шага, затем ждём загрузку страницы. Минимум 1 с; на медленном прокси ставь больше">Пауза после шага, сек <input id="sc-delay" type="number" min="1" step="0.5"></label>
                 <label>Каждые, мин <input id="sc-interval" type="number" min="0"></label>
                 <label class="check"><input id="sc-schedule" type="checkbox"> по расписанию</label>
               </div>
