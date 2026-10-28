@@ -10,6 +10,8 @@ const S = {
   current: null, // редактируемая копия сценария
   dirty: false,
   proxies: [],
+  subs: [],
+  xray: { running: false, error: '' },
   testSessionId: null,
   activeRun: null, // последний запуск из конструктора
   pick: null, // индекс шага, для которого выбираем координаты
@@ -104,25 +106,149 @@ $('#tabs').addEventListener('click', (e) => {
   for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x === b);
   for (const sec of document.querySelectorAll('.tab')) sec.classList.toggle('hidden', sec.id !== `tab-${S.tab}`);
   if (S.tab === 'runs') loadRuns().catch(() => {});
-  if (S.tab === 'proxies') loadProxies().catch(() => {});
+  if (S.tab === 'proxies') Promise.all([loadProxies(), loadSubs()]).then(() => { renderProxies(); renderSubs(); }).catch(() => {});
 });
 
 // ---------- прокси: варианты выбора ----------
+const flag = (cc) => (cc && cc.length === 2 ? String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65)) : '🌐');
+
+// У многих провайдеров флаг уже есть в названии — не дублируем его.
+const locName = (n) => `${flag(n.country)} ${String(n.name).replace(/^\s*[\u{1F1E6}-\u{1F1FF}]{2}\s*/u, '')}`;
+
 function proxyOptions(value, allowSame) {
-  const opts = [];
-  if (allowSame) opts.push(['same', 'Как было']);
-  opts.push(['none', 'Без прокси (IP сервера)'], ['pool', 'Из пула по кругу']);
-  for (const p of S.proxies) opts.push([p.id, `Прокси: ${p.label || p.url.replace(/\/\/[^@]*@/, '//')}`]);
-  return opts.map(([v, l]) => h('option', { value: v, selected: v === value }, l));
+  const known = new Set();
+  const opt = (v, l) => {
+    known.add(v);
+    return h('option', { value: v, selected: v === value }, l);
+  };
+  const out = [];
+  if (allowSame) out.push(opt('same', 'Как было'));
+  out.push(opt('none', 'Без прокси (IP сервера)'));
+  out.push(opt('pool', 'Мои прокси: по кругу'));
+
+  const nodes = S.subs.flatMap((sub) => sub.nodes.filter((n) => n.active).map((n) => ({ ...n, subId: sub.id })));
+  if (nodes.length) {
+    out.push(opt('random', `Случайная локация из подписок (${nodes.length})`));
+    for (const sub of S.subs) {
+      const n = sub.nodes.filter((x) => x.active).length;
+      if (n && S.subs.length > 1) out.push(opt(`sub:${sub.id}`, `Случайная из «${sub.name}» (${n})`));
+    }
+    const byCountry = {};
+    for (const n of nodes) if (n.country) byCountry[n.country] = (byCountry[n.country] || 0) + 1;
+    for (const [cc, n] of Object.entries(byCountry).sort()) out.push(opt(`geo:${cc}`, `${flag(cc)} ${cc}: случайная (${n})`));
+    out.push(h('optgroup', { label: 'Конкретная локация' }, nodes.map((n) => opt(n.id, locName(n)))));
+  }
+  if (S.proxies.length) {
+    out.push(h('optgroup', { label: 'Мои прокси' }, S.proxies.map((p) => opt(p.id, p.label || p.url.replace(/\/\/[^@]*@/, '//')))));
+  }
+  // сохранённое значение могло пропасть из списка (удалили прокси/подписку) — не подменяем его молча
+  if (value && !known.has(value)) out.push(opt(value, `${value} (нет в списке)`));
+  return out;
+}
+
+function refreshProxySelects() {
+  const sel = $('#test-proxy');
+  const cur = sel.value || 'none';
+  sel.replaceChildren(...proxyOptions(cur, false));
+  if (S.current) renderSteps();
 }
 
 async function loadProxies() {
   S.proxies = await api('GET', 'api/proxies');
-  const sel = $('#test-proxy');
-  const cur = sel.value || 'none';
-  sel.replaceChildren(...proxyOptions(cur, false));
   if (S.tab === 'proxies') renderProxies();
+  refreshProxySelects();
 }
+
+async function loadSubs() {
+  const data = await api('GET', 'api/subscriptions');
+  S.subs = data.subs;
+  S.xray = data.xray;
+  if (S.tab === 'proxies') renderSubs();
+  refreshProxySelects();
+}
+
+const fmtGb = (b) => `${(b / 1073741824).toFixed(1)} ГБ`;
+
+function renderSubs() {
+  $('#subs-list').replaceChildren(
+    ...S.subs.map((sub) => {
+      const active = sub.nodes.filter((n) => n.active).length;
+      const t = sub.traffic;
+      const info = [
+        `${active} из ${sub.nodes.length} серверов работают`,
+        t && t.total ? `трафик ${fmtGb(t.used)} / ${fmtGb(t.total)}` : null,
+        t && t.expire ? `до ${new Date(t.expire * 1000).toLocaleDateString('ru-RU')}` : null,
+        sub.updatedAt ? `обновлена ${fmtTime(sub.updatedAt)}` : null,
+      ].filter(Boolean).join(' · ');
+      const busy = (btn, fn) => act(async () => {
+        btn.disabled = true;
+        try { await fn(); } finally { btn.disabled = false; }
+      });
+      const refreshBtn = h('button', { class: 'small' }, 'Обновить');
+      refreshBtn.onclick = busy(refreshBtn, async () => {
+        await api('POST', `api/subscriptions/${sub.id}/refresh`);
+        toast('Подписка обновлена');
+        await loadSubs();
+      });
+      return h('div', { class: 'sub' },
+        h('div', { class: 'sub-head' },
+          h('b', { class: 'grow' }, sub.name),
+          refreshBtn,
+          h('button', {
+            class: 'small ghost',
+            onclick: act(async () => {
+              if (!confirm(`Удалить подписку «${sub.name}»?`)) return;
+              await api('DELETE', `api/subscriptions/${sub.id}`);
+              await loadSubs();
+            }),
+          }, '✕')),
+        h('div', { class: 'muted' }, info),
+        h('div', { class: 'muted' }, sub.url),
+        sub.error ? h('div', { class: 'err' }, sub.error) : null,
+        sub.warnings.length ? h('div', { class: 'warn' }, sub.warnings.join('\n')) : null,
+        h('details', {},
+          h('summary', {}, 'Локации'),
+          h('table', { class: 'nodes' }, sub.nodes.map((n) =>
+            h('tr', { class: n.active ? '' : 'bad' },
+              h('td', {}, locName(n), n.error ? h('div', { class: 'err' }, n.error) : null),
+              h('td', { class: 'muted' }, n.protocol),
+              h('td', { class: 'act' }, n.active ? h('button', {
+                class: 'small',
+                onclick: act(async (e) => {
+                  e.target.disabled = true;
+                  try {
+                    const { ip } = await api('POST', `api/proxies/${n.id}/check`);
+                    toast(`${locName(n)}: внешний IP ${ip}`);
+                  } finally { e.target.disabled = false; }
+                }),
+              }, 'Проверить') : 'не работает'))))),
+      );
+    }),
+  );
+  if (!S.subs.length) $('#subs-list').append(h('div', { class: 'muted' }, 'Подписок пока нет'));
+  const x = $('#xray-status');
+  x.className = S.xray.error ? 'err' : 'muted';
+  x.textContent = S.xray.error ? `Ошибка xray: ${S.xray.error}` : S.subs.length ? (S.xray.running ? 'xray работает' : 'xray остановлен') : '';
+}
+
+$('#sub-add').addEventListener('click', act(async () => {
+  const btn = $('#sub-add');
+  btn.disabled = true;
+  $('#sub-msg').className = 'muted';
+  $('#sub-msg').textContent = 'Скачиваю подписку…';
+  try {
+    const out = await api('POST', 'api/subscriptions', { url: $('#sub-url').value, name: $('#sub-name').value });
+    $('#sub-url').value = '';
+    $('#sub-name').value = '';
+    $('#sub-msg').textContent = `Добавлено серверов: ${out.nodes}${out.warnings.length ? `\n${out.warnings.join('\n')}` : ''}`;
+    await loadSubs();
+  } catch (e) {
+    $('#sub-msg').className = 'err';
+    $('#sub-msg').textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}));
 
 // ---------- сценарии ----------
 async function loadScenarios() {
@@ -748,7 +874,7 @@ async function boot() {
   $('#login').classList.add('hidden');
   $('#app').classList.remove('hidden');
   $('#add-type').replaceChildren(...S.config.steps.map((d) => h('option', { value: d.type }, d.label)));
-  await Promise.all([loadProxies(), loadScenarios()]);
+  await Promise.all([loadProxies(), loadSubs(), loadScenarios()]);
   // Если в фоне уже идёт запуск — подхватываем его.
   const runs = await api('GET', 'api/runs');
   const running = runs.find((r) => r.status === 'running');

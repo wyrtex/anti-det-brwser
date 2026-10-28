@@ -5,6 +5,7 @@ const { JsonStore } = require('./store');
 const { ProxyPool } = require('./proxies');
 const { SessionManager } = require('./sessions');
 const { Runner } = require('./runner');
+const { SubscriptionManager, Xray } = require('./subscriptions');
 const { STEPS, executeStep } = require('./steps');
 
 const env = process.env;
@@ -24,7 +25,14 @@ if (ADMIN_PASSWORD.length < 4) {
 
 const proxyStore = new JsonStore(path.join(DATA_DIR, 'proxies.json'), []);
 const scenarioStore = new JsonStore(path.join(DATA_DIR, 'scenarios.json'), []);
-const proxies = new ProxyPool(proxyStore);
+const subStore = new JsonStore(path.join(DATA_DIR, 'subscriptions.json'), []);
+const xray = new Xray({
+  bin: env.XRAY_PATH || 'xray',
+  dir: path.join(DATA_DIR, 'xray'),
+  basePort: Number(env.XRAY_BASE_PORT || 21000),
+});
+const subs = new SubscriptionManager(subStore, xray, { refreshHours: Number(env.SUB_REFRESH_HOURS ?? 6) });
+const proxies = new ProxyPool(proxyStore, subs);
 const sessions = new SessionManager(proxies, {
   max: Number(env.MAX_SESSIONS || 3),
   viewport: VIEWPORT,
@@ -159,7 +167,7 @@ const wrap = (fn) => async (req, res) => {
     const out = await fn(req, res);
     if (!res.headersSent) res.json(out ?? { ok: true });
   } catch (e) {
-    res.status(e.status || 400).json({ error: e.message.split('\n')[0] });
+    res.status(e.status || 400).json({ error: e.message.split('\n')[0].slice(0, 300) });
   }
 };
 const notFound = (what) => Object.assign(new Error(`${what} не найден(а)`), { status: 404 });
@@ -280,6 +288,19 @@ r.post('/api/sessions/:id/step', wrap(async (req) => {
   return { ok: true, session: sessions.get(id)?.info() || null, screenshot: shot };
 }));
 
+// подписки (VPN / Happ)
+r.get('/api/subscriptions', wrap(() => ({ subs: subs.list(), xray: subs.status })));
+r.post('/api/subscriptions', wrap(async (req) => {
+  const sub = await subs.add(req.body || {});
+  return { id: sub.id, nodes: sub.nodes.length, warnings: sub.warnings || [] };
+}));
+r.put('/api/subscriptions/:id', wrap((req) => subs.rename(req.params.id, req.body?.name)));
+r.post('/api/subscriptions/:id/refresh', wrap(async (req) => {
+  await subs.refresh(req.params.id);
+  return { subs: subs.list(), xray: subs.status };
+}));
+r.delete('/api/subscriptions/:id', wrap((req) => subs.remove(req.params.id)));
+
 // прокси
 r.get('/api/proxies', wrap(() => proxies.list()));
 r.post('/api/proxies', wrap((req) => proxies.addMany(req.body?.text, req.body || {})));
@@ -308,11 +329,16 @@ app.use(BASE_PATH || '/', r);
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`Панель: http://${HOST}:${PORT}${BASE_PATH}/`);
+  subs.start().then(
+    () => subs.status.error && console.error(`xray: ${subs.status.error}`),
+    (e) => console.error(`Подписки: ${e.message}`),
+  );
 });
 
 async function shutdown() {
   server.close();
   await sessions.closeAll();
+  await xray.stop();
   process.exit(0);
 }
 process.on('SIGTERM', shutdown);

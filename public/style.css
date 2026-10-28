@@ -183,3 +183,16 @@ main { padding: 16px; }
   .step-head select { flex: 1 1 calc(100% - 30px); }
   .step-head button { flex: 1; }
 }
+
+.subs { display: flex; flex-direction: column; gap: 10px; }
+.sub { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--step); }
+.sub-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sub-head .grow { flex: 1; min-width: 160px; }
+.sub details { margin-top: 8px; }
+.sub summary { cursor: pointer; color: var(--accent); }
+.nodes { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.nodes td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.nodes tr.bad td { opacity: .55; }
+.nodes td.act { text-align: right; white-space: nowrap; }
+.warn { color: #b45309; font-size: 12px; white-space: pre-wrap; }
+.ok { color: var(--go); }

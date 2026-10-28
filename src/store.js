@@ -16,7 +16,7 @@ class JsonStore {
 
   save() {
     const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), { mode: 0o600 }); // в файлах бывают пароли и ссылки подписок
     fs.renameSync(tmp, this.file);
   }
 }

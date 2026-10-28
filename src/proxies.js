@@ -58,8 +58,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //   'pool'  — следующий свободный прокси по кругу
 //   '<id>'  — конкретный прокси
 class ProxyPool {
-  constructor(store) {
+  // subs — SubscriptionManager: его локации выдаются как прокси на localhost.
+  constructor(store, subs = null) {
     this.store = store;
+    this.subs = subs;
+    this.lastRandom = null;
     if (!Array.isArray(store.data)) store.data = [];
     this.inUse = new Map(); // id -> количество активных сессий
     this.cursor = 0;
@@ -69,8 +72,23 @@ class ProxyPool {
     return this.store.data.map((p) => ({ ...p, inUse: this.inUse.get(p.id) || 0 }));
   }
 
+  // Локации из подписок в том же виде, что и обычные прокси.
+  nodes() {
+    if (!this.subs) return [];
+    return this.subs.nodes().map((n) => ({
+      id: n.id,
+      url: `socks5://127.0.0.1:${n.port}`,
+      label: n.name,
+      country: n.country,
+      subId: n.subId,
+      rotateUrl: '',
+      maxSessions: 1,
+      isNode: true,
+    }));
+  }
+
   get(id) {
-    return this.store.data.find((p) => p.id === id);
+    return this.store.data.find((p) => p.id === id) || this.nodes().find((p) => p.id === id);
   }
 
   addMany(text, { rotateUrl = '', maxSessions = 1 } = {}) {
@@ -99,7 +117,7 @@ class ProxyPool {
   }
 
   update(id, patch) {
-    const p = this.get(id);
+    const p = this.store.data.find((x) => x.id === id);
     if (!p) throw new Error('Прокси не найден');
     if (patch.url !== undefined) {
       parseProxy(patch.url);
@@ -121,13 +139,26 @@ class ProxyPool {
     return (this.inUse.get(p.id) || 0) < (p.maxSessions || 1);
   }
 
+  // Случайный свободный из списка; подряд одну и ту же локацию не берём, если есть выбор.
+  pickRandom(list, what) {
+    let free = list.filter((p) => this.free(p));
+    if (!list.length) throw new Error(`Нет локаций: ${what}`);
+    if (!free.length) throw new Error(`Все локации заняты: ${what}`);
+    if (free.length > 1 && this.lastRandom) free = free.filter((p) => p.id !== this.lastRandom);
+    const p = free[Math.floor(Math.random() * free.length)];
+    this.lastRandom = p.id;
+    return p;
+  }
+
+  // Режимы: 'none'; 'pool' — мои прокси по кругу; 'random' — случайная локация из подписок;
+  // 'sub:<id>' — случайная из подписки; 'geo:<CC>' — случайная из страны; иначе — id конкретного прокси/локации.
   // Возвращает { proxy, playwright, release() } либо null для режима 'none'.
   acquire(mode) {
     if (!mode || mode === 'none') return null;
     const all = this.store.data;
     let chosen;
     if (mode === 'pool') {
-      if (!all.length) throw new Error('Пул прокси пуст — добавь прокси или выбери «Без прокси»');
+      if (!all.length) throw new Error('Список своих прокси пуст — добавь прокси или выбери другой режим');
       for (let i = 0; i < all.length; i++) {
         const p = all[(this.cursor + i) % all.length];
         if (this.free(p)) {
@@ -137,6 +168,12 @@ class ProxyPool {
         }
       }
       if (!chosen) throw new Error('Все прокси заняты другими сессиями');
+    } else if (mode === 'random') {
+      chosen = this.pickRandom(this.nodes(), 'в подписках нет доступных серверов');
+    } else if (mode.startsWith('sub:')) {
+      chosen = this.pickRandom(this.nodes().filter((n) => n.subId === mode.slice(4)), 'в этой подписке нет доступных серверов');
+    } else if (mode.startsWith('geo:')) {
+      chosen = this.pickRandom(this.nodes().filter((n) => n.country === mode.slice(4)), `для страны ${mode.slice(4)} нет серверов`);
     } else {
       chosen = this.get(mode);
       if (!chosen) throw new Error(`Прокси ${mode} не найден`);
@@ -170,7 +207,7 @@ class ProxyPool {
   async check(id) {
     const p = this.get(id);
     if (!p) throw new Error('Прокси не найден');
-    const ctx = await request.newContext({ proxy: parseProxy(p.url), timeout: 20000 });
+    const ctx = await request.newContext({ proxy: parseProxy(p.url), timeout: 30000 });
     try {
       const res = await ctx.get('https://api.ipify.org?format=json');
       if (!res.ok()) throw new Error(`HTTP ${res.status()}`);

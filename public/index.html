@@ -128,6 +128,18 @@
       <section id="tab-proxies" class="tab hidden">
         <div class="proxies-wrap">
           <div class="card">
+            <b>Подписки (VPN / Happ)</b>
+            <p class="muted">Вставь ссылку подписки — панель получит из неё список серверов-локаций. В шаге «Начать сессию» можно выбрать случайную локацию, страну или конкретный сервер. Поддерживаются VLESS (в том числе Reality), VMess, Trojan, Shadowsocks.</p>
+            <div class="row">
+              <input id="sub-url" placeholder="https://…/sub/…" autocapitalize="off" autocorrect="off" spellcheck="false">
+              <input id="sub-name" placeholder="название (необязательно)" style="max-width:220px">
+              <button id="sub-add" class="primary">Добавить</button>
+            </div>
+            <div id="sub-msg" class="muted"></div>
+            <div id="subs-list" class="subs"></div>
+            <div id="xray-status" class="muted"></div>
+          </div>
+          <div class="card">
             <b>Добавить прокси</b>
             <p class="muted">По одному в строке: <code>http://user:pass@host:port</code>, <code>host:port:user:pass</code>, <code>host:port</code>, <code>socks5://host:port</code> (SOCKS — только без пароля).</p>
             <textarea id="px-text" rows="5" placeholder="http://user:pass@1.2.3.4:8000"></textarea>
